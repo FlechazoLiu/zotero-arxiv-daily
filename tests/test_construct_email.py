@@ -47,6 +47,20 @@ def test_render_email_no_affiliations():
     assert "Unknown Affiliation" in html
 
 
+def test_render_email_with_keywords():
+    paper = make_sample_paper(score=7.0, tldr="ok", keywords=["reinforcement learning", "robotics"])
+    html = render_email([paper])
+    assert "Keywords:" in html
+    assert "reinforcement learning" in html
+    assert "robotics" in html
+
+
+def test_render_email_without_keywords():
+    paper = make_sample_paper(score=7.0, tldr="ok", keywords=None)
+    html = render_email([paper])
+    assert "Keywords:" not in html
+
+
 def test_get_stars_low_score():
     assert get_stars(5.0) == ""
     assert get_stars(6.0) == ""
@@ -71,6 +85,13 @@ def test_get_block_html_contains_all_fields():
     assert "Summary" in html
     assert "http://pdf.url" in html
     assert "MIT" in html
+
+
+def test_get_block_html_with_keywords():
+    html = get_block_html("Title", "Auth", "3.5", "Summary", "http://pdf.url", "MIT", ["keyword one", "keyword two"])
+    assert "Keywords:" in html
+    assert "keyword one" in html
+    assert "keyword two" in html
 
 
 def test_get_empty_html():

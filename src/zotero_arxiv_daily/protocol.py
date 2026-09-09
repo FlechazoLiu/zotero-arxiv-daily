@@ -19,6 +19,7 @@ class Paper:
     full_text: Optional[str] = None
     tldr: Optional[str] = None
     affiliations: Optional[list[str]] = None
+    keywords: Optional[list[str]] = None
     score: Optional[float] = None
 
     def _generate_tldr_with_llm(self, openai_client:OpenAI,llm_params:dict) -> str:
@@ -102,6 +103,52 @@ class Paper:
         except Exception as e:
             logger.warning(f"Failed to generate affiliations of {self.url}: {e}")
             self.affiliations = None
+            return None
+
+    def _generate_keywords_with_llm(self, openai_client:OpenAI,llm_params:dict) -> list[str]:
+        prompt = f"Given the following information of a paper, extract 3 to 6 keywords that best capture its main topics and methods:\n\n"
+        if self.title:
+            prompt += f"Title:\n {self.title}\n\n"
+
+        if self.abstract:
+            prompt += f"Abstract: {self.abstract}\n\n"
+        elif self.full_text:
+            prompt += f"Preview of main content:\n {self.full_text}\n\n"
+        else:
+            logger.warning(f"Neither abstract nor full text is provided for {self.url}")
+            raise ValueError("Neither abstract nor full text is provided")
+
+        # use gpt-4o tokenizer for estimation
+        enc = tiktoken.encoding_for_model("gpt-4o")
+        prompt_tokens = enc.encode(prompt)
+        prompt_tokens = prompt_tokens[:2000]  # truncate to 2000 tokens
+        prompt = enc.decode(prompt_tokens)
+
+        response = openai_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an assistant who perfectly extracts keywords of scientific papers. You should return a python list of 3 to 6 keywords, like [\"keyword one\",\"keyword two\"]. Keywords should be concise technical terms in English, without duplication. You should only return the final list of keywords, and do not return any intermediate results.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            **llm_params.get('generation_kwargs', {})
+        )
+        keywords = response.choices[0].message.content
+
+        keywords = re.search(r'\[.*?\]', keywords, flags=re.DOTALL).group(0)
+        keywords = json.loads(keywords)
+        keywords = [str(k) for k in dict.fromkeys(keywords)]
+        return keywords[:6]
+
+    def generate_keywords(self, openai_client:OpenAI,llm_params:dict) -> Optional[list[str]]:
+        try:
+            keywords = self._generate_keywords_with_llm(openai_client,llm_params)
+            self.keywords = keywords
+            return keywords
+        except Exception as e:
+            logger.warning(f"Failed to generate keywords of {self.url}: {e}")
+            self.keywords = None
             return None
 @dataclass
 class CorpusPaper:

@@ -122,3 +122,92 @@ def test_affiliations_error_returns_none(llm_params):
     result = paper.generate_affiliations(broken_client, llm_params)
     assert result is None
     assert paper.affiliations is None
+
+
+# ---------------------------------------------------------------------------
+# generate_keywords
+# ---------------------------------------------------------------------------
+
+
+def test_keywords_returns_parsed_list(llm_params):
+    client = make_stub_openai_client()
+    paper = make_sample_paper()
+    result = paper.generate_keywords(client, llm_params)
+    assert isinstance(result, list)
+    assert "widget engineering" in result
+    assert paper.keywords == result
+
+
+def test_keywords_works_without_fulltext(llm_params):
+    client = make_stub_openai_client()
+    paper = make_sample_paper(full_text=None)
+    result = paper.generate_keywords(client, llm_params)
+    assert isinstance(result, list)
+
+
+def test_keywords_none_without_abstract_or_fulltext(llm_params):
+    client = make_stub_openai_client()
+    paper = make_sample_paper(abstract="", full_text=None)
+    result = paper.generate_keywords(client, llm_params)
+    assert result is None
+    assert paper.keywords is None
+
+
+def test_keywords_malformed_llm_output(llm_params):
+    """LLM returns keywords without JSON brackets. Should fall back gracefully."""
+    from types import SimpleNamespace
+
+    def create_no_brackets(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="widget engineering, novel approach"),
+                )
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create_no_brackets)
+        )
+    )
+    paper = make_sample_paper()
+    result = paper.generate_keywords(client, llm_params)
+    # re.search for [...] will fail -> AttributeError -> caught -> returns None
+    assert result is None
+
+
+def test_keywords_error_returns_none(llm_params):
+    from types import SimpleNamespace
+
+    broken_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+        )
+    )
+    paper = make_sample_paper()
+    result = paper.generate_keywords(broken_client, llm_params)
+    assert result is None
+    assert paper.keywords is None
+
+
+def test_keywords_caps_at_six(llm_params):
+    from types import SimpleNamespace
+
+    def create_many_keywords(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='["a","b","c","d","e","f","g","h"]'
+                    )
+                )
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_many_keywords))
+    )
+    paper = make_sample_paper()
+    result = paper.generate_keywords(client, llm_params)
+    assert len(result) == 6
