@@ -20,6 +20,10 @@ DOWNLOAD_TIMEOUT = (10, 60)
 PDF_EXTRACT_TIMEOUT = 180
 TAR_EXTRACT_TIMEOUT = 180
 
+RSS_EMPTY_RETRIES = 3
+RSS_EMPTY_RETRY_DELAY = 30
+RETRYABLE_HTTP_STATUSES = {429, 500, 503}
+
 
 def _download_file(url: str, path: str) -> None:
     with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
@@ -117,10 +121,18 @@ class ArxivRetriever(BaseRetriever):
         client = arxiv.Client(num_retries=10, delay_seconds=10)
         query = '+'.join(self.config.source.arxiv.category)
         include_cross_list = self.config.source.arxiv.get("include_cross_list", False)
-        # Get the latest paper from arxiv rss feed
-        feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
-        if 'Feed error for query' in feed.feed.title:
-            raise Exception(f"Invalid ARXIV_QUERY: {query}.")
+        # Get the latest paper from arxiv rss feed.
+        # The feed occasionally comes back transiently empty, so retry before
+        # accepting an empty day.
+        for attempt in range(RSS_EMPTY_RETRIES):
+            feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
+            if 'Feed error for query' in getattr(feed.feed, 'title', ''):
+                raise Exception(f"Invalid ARXIV_QUERY: {query}.")
+            if len(feed.entries) > 0:
+                break
+            if attempt < RSS_EMPTY_RETRIES - 1:
+                logger.warning(f"arXiv RSS feed returned no entries (attempt {attempt + 1}/{RSS_EMPTY_RETRIES}), retrying in {RSS_EMPTY_RETRY_DELAY}s")
+                sleep(RSS_EMPTY_RETRY_DELAY)
         raw_papers = []
         allowed_announce_types = {"new", "cross"} if include_cross_list else {"new"}
         all_paper_ids = [
@@ -144,9 +156,9 @@ class ArxivRetriever(BaseRetriever):
                     raw_papers.extend(batch)
                     break
                 except arxiv.HTTPError as exc:
-                    if exc.status == 429 and attempt < max_batch_retries - 1:
+                    if exc.status in RETRYABLE_HTTP_STATUSES and attempt < max_batch_retries - 1:
                         wait = batch_retry_delay * (attempt + 1)
-                        logger.warning(f"arXiv API 429 on batch {i // 20}, retry {attempt + 1}/{max_batch_retries} in {wait}s")
+                        logger.warning(f"arXiv API {exc.status} on batch {i // 20}, retry {attempt + 1}/{max_batch_retries} in {wait}s")
                         sleep(wait)
                     else:
                         raise
